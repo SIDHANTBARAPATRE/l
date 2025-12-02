@@ -1,0 +1,72 @@
+import sagemaker
+from sagemaker import get_execution_role
+from sagemaker.inputs import TrainingInput
+import boto3
+import numpy as np
+
+
+sagemaker_session = sagemaker.Session()
+role = get_execution_role()
+region = boto3.Session().region_name
+
+
+bucket_name = 'lab3-data-bucket'
+
+
+
+train_uri = f"s3://{bucket_name}/train.csv"
+test_uri = f"s3://{bucket_name}/test.csv"
+
+print(f"Using Training Data from: {train_uri}")
+print(f"Using Testing Data from:  {test_uri}")
+
+
+container = sagemaker.image_uris.retrieve(
+    "linear-learner", region
+)
+
+linear_estimator = sagemaker.estimator.Estimator(
+    container,
+    role,
+    instance_count=1,
+    instance_type='ml.m5.large',
+    output_path=f's3://{bucket_name}/output',
+    sagemaker_session=sagemaker_session
+)
+
+
+linear_estimator.set_hyperparameters(
+    predictor_type='regressor',
+    mini_batch_size=4, 
+    epochs=10,
+    feature_dim=1      
+)
+
+
+linear_estimator.fit({
+    'train': TrainingInput(s3_data=train_uri, content_type='text/csv'),
+    'test':  TrainingInput(s3_data=test_uri, content_type='text/csv')
+})
+
+
+from sagemaker.serializers import CSVSerializer
+from sagemaker.deserializers import JSONDeserializer
+
+linear_predictor = linear_estimator.deploy(
+    initial_instance_count=1,
+    instance_type='ml.m5.large',
+    serializer=CSVSerializer(),      
+    deserializer=JSONDeserializer()  
+)
+
+
+test_x = np.array([[10], [25], [50]])
+
+print("\n--- Prediction Results ---")
+results = linear_predictor.predict(test_x)
+
+for i, prediction in enumerate(results['predictions']):
+    input_val = test_x[i][0]
+    score = prediction['score']
+    print(f"Input x: {input_val} | Predicted y: {score:.4f}")
+
