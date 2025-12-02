@@ -1,0 +1,73 @@
+import sagemaker
+import boto3
+import pandas as pd
+import numpy as np
+import io
+import os
+from sklearn.preprocessing import StandardScaler
+
+
+sagemaker_session = sagemaker.Session()
+role = sagemaker.get_execution_role()
+bucket_name = 'lab3-data-bucket'
+
+
+file_key = 'titanic.csv'
+
+raw_data_uri = f"s3://{bucket_name}/{file_key}"
+
+print(f"Looking for data at: {raw_data_uri}")
+
+
+try:
+    df = pd.read_csv(raw_data_uri)
+    print("Success! Data loaded from S3.")
+    print("Shape:", df.shape)
+except Exception as e:
+    print("Error: Could not find the file in S3.")
+    print(f"Please check that 'titanic.csv' is in bucket: {bucket_name}")
+    print(f"Error details: {e}")
+
+    raise e
+
+
+print("\nStarting Preprocessing...")
+
+
+df['Age'] = df['Age'].fillna(df['Age'].median())
+df['Embarked'] = df['Embarked'].fillna(df['Embarked'].mode()[0])
+
+
+if 'Cabin' in df.columns:
+    df.drop('Cabin', axis=1, inplace=True)
+df.drop(['PassengerId', 'Name', 'Ticket'], axis=1, inplace=True)
+
+
+df = pd.get_dummies(df, columns=['Sex', 'Embarked'], drop_first=True)
+
+
+scaler = StandardScaler()
+cols_to_scale = ['Age', 'Fare']
+df[cols_to_scale] = scaler.fit_transform(df[cols_to_scale])
+
+print("Preprocessing Complete.")
+print(df.head())
+
+
+processed_filename = "titanic_cleaned.csv"
+prefix_processed = "titanic-lab/processed"
+
+
+df.to_csv(processed_filename, index=False)
+
+
+processed_s3_path = sagemaker_session.upload_data(
+    path=processed_filename,
+    bucket=bucket_name,
+    key_prefix=prefix_processed
+)
+
+print("\n------------------------------------------------")
+print("LAB COMPLETE")
+print(f"Cleaned dataset saved to S3 at: {processed_s3_path}")
+print("------------------------------------------------")
