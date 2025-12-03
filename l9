@@ -1,0 +1,166 @@
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+from collections import deque
+
+
+class GridWorld:
+    def __init__(self):
+        self.grid_size = 4
+        self.terminal_states = [0, 15]
+        self.actions = [0, 1, 2, 3] 
+
+    def step(self, state, action):
+        if state in self.terminal_states:
+            return state, 0, True
+
+        row, col = divmod(state, self.grid_size)
+
+        if action == 0:   row = max(row - 1, 0)
+        elif action == 1: row = min(row + 1, self.grid_size - 1)
+        elif action == 2: col = max(col - 1, 0)
+        elif action == 3: col = min(col + 1, self.grid_size - 1)
+
+        next_state = row * self.grid_size + col
+        reward = -1
+        done = next_state in self.terminal_states
+        return next_state, reward, done
+
+    def reset(self):
+        start_state = np.random.randint(0, 16)
+        while start_state in self.terminal_states:
+            start_state = np.random.randint(0, 16)
+        return start_state
+
+
+class QNetwork(nn.Module):
+    def __init__(self):
+        super(QNetwork, self).__init__()
+       
+        self.fc1 = nn.Linear(16, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, 4)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return self.fc3(x)
+
+
+def state_to_tensor(state):
+    
+    v = torch.zeros(16)
+    v[state] = 1.0
+    return v.unsqueeze(0) 
+
+
+def train_dqn():
+    env = GridWorld()
+
+    
+    episodes = 1000
+    gamma = 0.99
+    epsilon = 1.0
+    epsilon_decay = 0.995
+    epsilon_min = 0.1
+    learning_rate = 0.001
+    batch_size = 32
+
+    
+    policy_net = QNetwork()
+    optimizer = optim.Adam(policy_net.parameters(), lr=learning_rate)
+    criterion = nn.MSELoss()
+
+   
+    memory = deque(maxlen=2000)
+
+    print("Training DQN (this may take a moment)...")
+
+    for episode in range(episodes):
+        state = env.reset()
+        done = False
+
+        while not done:
+            state_tensor = state_to_tensor(state)
+
+           
+            if random.random() < epsilon:
+                action = random.choice(env.actions)
+            else:
+                with torch.no_grad():
+                    q_values = policy_net(state_tensor)
+                    action = torch.argmax(q_values).item()
+
+          
+            next_state, reward, done = env.step(state, action)
+
+           
+            memory.append((state, action, reward, next_state, done))
+            state = next_state
+
+        
+            if len(memory) > batch_size:
+                minibatch = random.sample(memory, batch_size)
+
+                
+                states_b = torch.cat([state_to_tensor(x[0]) for x in minibatch])
+                next_states_b = torch.cat([state_to_tensor(x[3]) for x in minibatch])
+
+                
+                q_preds = policy_net(states_b)
+
+               
+                with torch.no_grad():
+                    q_next = policy_net(next_states_b)
+
+                target_q_values = q_preds.clone()
+
+                for i, (s, a, r, ns, d) in enumerate(minibatch):
+                    
+                    target = r
+                    if not d:
+                        target += gamma * torch.max(q_next[i]).item()
+                    target_q_values[i][a] = target
+
+               
+                loss = criterion(q_preds, target_q_values)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+       
+        if epsilon > epsilon_min:
+            epsilon *= epsilon_decay
+
+        if (episode+1) % 200 == 0:
+            print(f"Episode {episode+1}/{episodes} completed.")
+
+    return policy_net
+
+
+if __name__ == "__main__":
+    trained_model = train_dqn()
+
+    print("\nVisualizing DQN Policy:")
+    print("-" * 17)
+    actions_map = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+    env = GridWorld()
+
+    output_grid = []
+    for s in range(16):
+        if s in [0, 15]:
+            output_grid.append(" T ")
+            continue
+
+        st = state_to_tensor(s)
+        with torch.no_grad():
+            q = trained_model(st)
+            best_a = torch.argmax(q).item()
+        output_grid.append(f" {actions_map[best_a]} ")
+
+    for i in range(0, 16, 4):
+        print("|".join(output_grid[i:i+4]))
+        print("-" * 17)
