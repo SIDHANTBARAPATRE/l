@@ -1,72 +1,99 @@
-import sagemaker
-from sagemaker import get_execution_role
-from sagemaker.inputs import TrainingInput
-import boto3
+
 import numpy as np
 
+class MDPGridWorld:
+    def __init__(self):
+        self.grid_size = 4
+        
+        self.terminal_states = [15]
+        self.actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+        self.gamma = 1.0 
 
-sagemaker_session = sagemaker.Session()
-role = get_execution_role()
-region = boto3.Session().region_name
+    def get_next_state_reward(self, state, action):
+        if state in self.terminal_states:
+            return state, 0
+
+        row, col = divmod(state, self.grid_size)
+
+       
+        if action == 'UP':    row = max(row - 1, 0)
+        elif action == 'DOWN':  row = min(row + 1, self.grid_size - 1)
+        elif action == 'LEFT':  col = max(col - 1, 0)
+        elif action == 'RIGHT': col = min(col + 1, self.grid_size - 1)
+
+        next_state = row * self.grid_size + col
+        reward = -1 
+        return next_state, reward
+
+    def value_iteration(self):
+        """1. PLAN: Calculate V* to find the best policy."""
+        V = np.zeros(self.grid_size * self.grid_size)
+        theta = 1e-4
+
+        while True:
+            delta = 0
+            V_new = np.copy(V)
+            for s in range(self.grid_size * self.grid_size):
+                if s in self.terminal_states: continue
+
+                action_values = []
+                for a in self.actions:
+                    ns, r = self.get_next_state_reward(s, a)
+                    action_values.append(r + self.gamma * V[ns])
+
+                new_val = max(action_values)
+                V_new[s] = new_val
+                delta = max(delta, abs(new_val - V[s]))
+            V = V_new
+            if delta < theta: break
+        return V
+
+    def rollout(self, start_state, V):
+        """2. ACT: Execute the policy from the start state."""
+        print(f"\n--- Rolling out Optimal Policy from State {start_state} (0,0) ---")
+
+        curr_state = start_state
+        steps = 0
+        path = [curr_state]
+
+        while curr_state not in self.terminal_states:
+            row, col = divmod(curr_state, self.grid_size)
+
+           
+            best_action = None
+            best_val = -float('inf')
+
+            for action in self.actions:
+                ns, r = self.get_next_state_reward(curr_state, action)
+                val = r + self.gamma * V[ns]
+
+                if val > best_val:
+                    best_val = val
+                    best_action = action
+
+          
+            next_state, _ = self.get_next_state_reward(curr_state, best_action)
+
+            print(f"Step {steps+1}: At {curr_state} ({row},{col}) -> Action: {best_action} -> New State: {next_state}")
+
+            curr_state = next_state
+            path.append(curr_state)
+            steps += 1
+
+            if steps > 20: 
+                print("Stuck in loop!")
+                break
+
+        print(f"\nGoal Reached at State {curr_state}!")
+        print(f"Total Path: {path}")
 
 
-bucket_name = 'lab3-data-bucket'
+if __name__ == "__main__":
+    world = MDPGridWorld()
 
+   
+    print("Computing Optimal Policy...")
+    optimal_values = world.value_iteration()
 
-
-train_uri = f"s3://{bucket_name}/train.csv"
-test_uri = f"s3://{bucket_name}/test.csv"
-
-print(f"Using Training Data from: {train_uri}")
-print(f"Using Testing Data from:  {test_uri}")
-
-
-container = sagemaker.image_uris.retrieve(
-    "linear-learner", region
-)
-
-linear_estimator = sagemaker.estimator.Estimator(
-    container,
-    role,
-    instance_count=1,
-    instance_type='ml.m5.large',
-    output_path=f's3://{bucket_name}/output',
-    sagemaker_session=sagemaker_session
-)
-
-
-linear_estimator.set_hyperparameters(
-    predictor_type='regressor',
-    mini_batch_size=4, 
-    epochs=10,
-    feature_dim=1      
-)
-
-
-linear_estimator.fit({
-    'train': TrainingInput(s3_data=train_uri, content_type='text/csv'),
-    'test':  TrainingInput(s3_data=test_uri, content_type='text/csv')
-})
-
-
-from sagemaker.serializers import CSVSerializer
-from sagemaker.deserializers import JSONDeserializer
-
-linear_predictor = linear_estimator.deploy(
-    initial_instance_count=1,
-    instance_type='ml.m5.large',
-    serializer=CSVSerializer(),      
-    deserializer=JSONDeserializer()  
-)
-
-
-test_x = np.array([[10], [25], [50]])
-
-print("\n--- Prediction Results ---")
-results = linear_predictor.predict(test_x)
-
-for i, prediction in enumerate(results['predictions']):
-    input_val = test_x[i][0]
-    score = prediction['score']
-    print(f"Input x: {input_val} | Predicted y: {score:.4f}")
-
+   
+    world.rollout(start_state=0, V=optimal_values)
