@@ -1,0 +1,155 @@
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.distributions import Normal
+
+
+class ContinuousTargetEnv:
+    def __init__(self):
+       
+        self.state = np.array([-2.0], dtype=np.float32)
+        self.max_steps = 200
+        self.current_step = 0
+
+    def reset(self):
+        
+        self.state = np.array([np.random.uniform(-2, -1)], dtype=np.float32)
+        self.current_step = 0
+        return self.state
+
+    def step(self, action):
+        
+        force = np.clip(action, -1.0, 1.0)
+
+        
+        self.state[0] += force * 0.1
+
+        
+        dist = abs(self.state[0] - 0.0)
+        reward = -dist
+
+      
+        self.current_step += 1
+        done = dist < 0.1 or self.current_step >= self.max_steps
+
+       
+        if dist < 0.1:
+            reward += 10.0
+
+        return self.state, reward, done
+
+
+class ActorCritic(nn.Module):
+    def __init__(self):
+        super(ActorCritic, self).__init__()
+        
+        self.fc1 = nn.Linear(1, 128)
+
+        
+        self.mu_head = nn.Linear(128, 1)
+        self.sigma_head = nn.Linear(128, 1)
+
+        
+        self.value_head = nn.Linear(128, 1)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+
+       
+        mu = torch.tanh(self.mu_head(x)) 
+        sigma = F.softplus(self.sigma_head(x)) + 1e-5 
+
+       
+        value = self.value_head(x)
+
+        return mu, sigma, value
+
+
+def train_a2c_continuous():
+    env = ContinuousTargetEnv()
+    model = ActorCritic()
+
+    
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    episodes = 1000
+    gamma = 0.99
+
+    print("Training A2C for Continuous Control...")
+
+    for episode in range(episodes):
+        state = env.reset()
+        done = False
+        total_reward = 0
+
+        while not done:
+            state_t = torch.FloatTensor(state)
+
+           
+            mu, sigma, value = model(state_t)
+
+            
+            dist = Normal(mu, sigma)
+            action = dist.sample()
+
+           
+            action_numpy = action.detach().numpy()[0]
+
+           
+            next_state, reward, done = env.step(action_numpy)
+            total_reward += reward
+
+           
+            next_state_t = torch.FloatTensor(next_state)
+
+            with torch.no_grad():
+                _, _, next_value = model(next_state_t)
+                
+                target_value = reward + (0 if done else gamma * next_value.item())
+
+            
+            advantage = target_value - value
+
+           
+            critic_loss = advantage.pow(2)
+
+          
+            log_prob = dist.log_prob(action)
+            actor_loss = -log_prob * advantage.detach()
+
+           
+            loss = actor_loss + critic_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            state = next_state
+
+        if (episode + 1) % 100 == 0:
+            print(f"Episode {episode + 1}/episodes: Total Reward = {total_reward:.2f}")
+
+    return model
+
+
+if __name__ == "__main__":
+    trained_model = train_a2c_continuous()
+
+    print("\nTesting Trained Policy (Moving from -2.0 to 0.0):")
+    env = ContinuousTargetEnv()
+    state = env.reset()
+
+    for i in range(10):
+        state_t = torch.FloatTensor(state)
+        with torch.no_grad():
+            mu, sigma, _ = trained_model(state_t)
+            
+            action = mu.item()
+
+        next_state, _, done = env.step(action)
+        print(f"Step {i+1}: Pos {state[0]:.2f} -> Action {action:.2f} -> New Pos {next_state[0]:.2f}")
+        state = next_state
+        if done: break
