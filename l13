@@ -1,0 +1,176 @@
+
+import numpy as np
+
+
+class MultiAgentGridWorld:
+    def __init__(self):
+        self.grid_size = 4
+        self.actions = [0, 1, 2, 3] 
+
+       
+        self.goal_A = (3, 3) 
+        self.goal_B = (0, 3) 
+
+    def reset(self):
+        
+        self.pos_A = (0, 0)
+        self.pos_B = (3, 0)
+
+        
+        return self.pos_A + self.pos_B
+
+    def step(self, action_A, action_B):
+        
+        new_pos_A = self._move(self.pos_A, action_A)
+        new_pos_B = self._move(self.pos_B, action_B)
+
+        reward_A = -1
+        reward_B = -1
+        done_A = False
+        done_B = False
+
+       
+        if new_pos_A == new_pos_B:
+           
+            reward_A = -10
+            reward_B = -10
+            new_pos_A = self.pos_A
+            new_pos_B = self.pos_B
+        else:
+            
+            if new_pos_A == self.goal_A:
+                reward_A = 100
+                done_A = True
+
+            if new_pos_B == self.goal_B:
+                reward_B = 100
+                done_B = True
+
+       
+        if not done_A: self.pos_A = new_pos_A
+        if not done_B: self.pos_B = new_pos_B
+
+        next_state = self.pos_A + self.pos_B
+
+        
+        done = done_A or done_B
+
+        return next_state, reward_A, reward_B, done
+
+    def _move(self, pos, action):
+        r, c = pos
+        if action == 0:   r = max(r - 1, 0) # UP
+        elif action == 1: r = min(r + 1, self.grid_size - 1) # DOWN
+        elif action == 2: c = max(c - 1, 0) # LEFT
+        elif action == 3: c = min(c + 1, self.grid_size - 1) # RIGHT
+        return (r, c)
+
+
+def train_marl():
+    env = MultiAgentGridWorld()
+
+    
+    def get_state_idx(state_tuple):
+        r1, c1, r2, c2 = state_tuple
+       
+        return r1*64 + c1*16 + r2*4 + c2
+
+    Q_A = np.zeros((256, 4))
+    Q_B = np.zeros((256, 4))
+
+    
+    episodes = 5000
+    alpha = 0.1
+    gamma = 0.95
+    epsilon = 0.1
+
+    print("Training Multi-Agent System (Agents A & B)...")
+
+    for episode in range(episodes):
+        state = env.reset()
+        state_idx = get_state_idx(state)
+        done = False
+
+        while not done:
+           
+            if np.random.rand() < epsilon:
+                act_A = np.random.choice(env.actions)
+            else:
+                act_A = np.argmax(Q_A[state_idx])
+
+            if np.random.rand() < epsilon:
+                act_B = np.random.choice(env.actions)
+            else:
+                act_B = np.argmax(Q_B[state_idx])
+
+           
+            next_state, rA, rB, done = env.step(act_A, act_B)
+            next_state_idx = get_state_idx(next_state)
+
+          
+
+           
+            old_val_A = Q_A[state_idx, act_A]
+            next_max_A = np.max(Q_A[next_state_idx])
+            Q_A[state_idx, act_A] = old_val_A + alpha * (rA + gamma * next_max_A - old_val_A)
+
+            old_val_B = Q_B[state_idx, act_B]
+            next_max_B = np.max(Q_B[next_state_idx])
+            Q_B[state_idx, act_B] = old_val_B + alpha * (rB + gamma * next_max_B - old_val_B)
+
+            state_idx = next_state_idx
+
+           
+            if rA == 100 or rB == 100:
+                break
+
+    return Q_A, Q_B, env
+
+
+if __name__ == "__main__":
+    qa, qb, env = train_marl()
+
+    print("\n--- Testing MARL Interaction ---")
+    print("Agent A: (0,0) -> (3,3)")
+    print("Agent B: (3,0) -> (0,3)")
+
+    state = env.reset()
+    state_idx = 0 
+
+    
+    def print_grid(pos_a, pos_b):
+        grid = [[' . ' for _ in range(4)] for _ in range(4)]
+        grid[pos_a[0]][pos_a[1]] = ' A '
+        grid[pos_b[0]][pos_b[1]] = ' B '
+        if pos_a == pos_b: grid[pos_a[0]][pos_a[1]] = ' X ' 
+        for row in grid:
+            print("".join(row))
+        print("-" * 12)
+
+    pos_A = (0,0)
+    pos_B = (3,0)
+
+    print_grid(pos_A, pos_B)
+
+    for step in range(8):
+       
+        idx = pos_A[0]*64 + pos_A[1]*16 + pos_B[0]*4 + pos_B[1]
+
+       
+        act_A = np.argmax(qa[idx])
+        act_B = np.argmax(qb[idx])
+
+        move_map = {0:'UP', 1:'DOWN', 2:'LEFT', 3:'RIGHT'}
+        print(f"Step {step+1}: Agent A goes {move_map[act_A]}, Agent B goes {move_map[act_B]}")
+
+        new_state, _, _, _ = env.step(act_A, act_B)
+
+      
+        pos_A = (new_state[0], new_state[1])
+        pos_B = (new_state[2], new_state[3])
+
+        print_grid(pos_A, pos_B)
+
+        if pos_A == (3,3) and pos_B == (0,3):
+            print("Both Agents Reached Goals!")
+            break
