@@ -1,0 +1,101 @@
+
+import numpy as np
+
+
+class GridWorld:
+    def __init__(self):
+        self.grid_size = 4
+        self.terminal_states = [0, 15]
+        self.actions = [0, 1, 2, 3] 
+
+    def step(self, state, action):
+        if state in self.terminal_states:
+            return state, 0, True
+
+        row, col = divmod(state, self.grid_size)
+
+        if action == 0:   row = max(row - 1, 0) 
+        elif action == 1: row = min(row + 1, self.grid_size - 1) 
+        elif action == 2: col = max(col - 1, 0) 
+        elif action == 3: col = min(col + 1, self.grid_size - 1) 
+
+        next_state = row * self.grid_size + col
+        reward = -1
+        done = next_state in self.terminal_states
+        return next_state, reward, done
+
+    def reset(self):
+        start_state = np.random.randint(0, 16)
+        while start_state in self.terminal_states:
+            start_state = np.random.randint(0, 16)
+        return start_state
+
+
+def sarsa_learning():
+    env = GridWorld()
+
+    
+    num_episodes = 5000
+    alpha = 0.1   
+    gamma = 1.0  
+    epsilon = 0.1 
+
+   
+    Q = np.zeros((16, 4))
+
+    print("Training with SARSA (5000 Episodes)...")
+
+    for _ in range(num_episodes):
+        state = env.reset()
+
+        
+        if np.random.rand() < epsilon:
+            action = np.random.choice(env.actions)
+        else:
+            action = np.argmax(Q[state])
+
+        done = False
+
+        while not done:
+            
+            next_state, reward, done = env.step(state, action)
+
+         
+            if np.random.rand() < epsilon:
+                next_action = np.random.choice(env.actions)
+            else:
+                next_action = np.argmax(Q[next_state])
+
+           
+            q_next = 0 if done else Q[next_state, next_action]
+
+            target = reward + gamma * q_next
+            Q[state, action] += alpha * (target - Q[state, action])
+
+            
+            state = next_state
+            action = next_action
+
+    return Q
+
+
+def print_policy(Q):
+    actions_map = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+    print("\nFinal Policy (SARSA):")
+    print("-" * 17)
+
+    grid_output = []
+    for s in range(16):
+        if s in [0, 15]:
+            grid_output.append(" T ")
+            continue
+        best_action = np.argmax(Q[s])
+        grid_output.append(f" {actions_map[best_action]} ")
+
+    for i in range(0, 16, 4):
+        print("|".join(grid_output[i:i+4]))
+        print("-" * 17)
+
+if __name__ == "__main__":
+    q_table = sarsa_learning()
+    print_policy(q_table)
