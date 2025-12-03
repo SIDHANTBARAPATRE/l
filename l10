@@ -1,0 +1,183 @@
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+
+
+class GridWorld:
+    def __init__(self):
+        self.grid_size = 4
+        self.terminal_states = [0, 15]
+        self.actions = [0, 1, 2, 3] 
+
+    def step(self, state, action):
+        if state in self.terminal_states:
+            return state, 0, True
+
+        row, col = divmod(state, self.grid_size)
+        if action == 0:   row = max(row - 1, 0)
+        elif action == 1: row = min(row + 1, self.grid_size - 1)
+        elif action == 2: col = max(col - 1, 0)
+        elif action == 3: col = min(col + 1, self.grid_size - 1)
+
+        next_state = row * self.grid_size + col
+        reward = -1
+        done = next_state in self.terminal_states
+        return next_state, reward, done
+
+    def reset(self):
+        start_state = np.random.randint(0, 16)
+        while start_state in self.terminal_states:
+            start_state = np.random.randint(0, 16)
+        return start_state
+
+
+
+class PolicyNetwork(nn.Module):
+    def __init__(self):
+        super(PolicyNetwork, self).__init__()
+        self.fc1 = nn.Linear(16, 128)
+        self.fc2 = nn.Linear(128, 4)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        
+        return F.softmax(x, dim=-1)
+
+class ValueNetwork(nn.Module):
+    def __init__(self):
+        super(ValueNetwork, self).__init__()
+        self.fc1 = nn.Linear(16, 128)
+        self.fc2 = nn.Linear(128, 1)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
+
+def state_to_tensor(state):
+    v = torch.zeros(16)
+    v[state] = 1.0
+    return v.unsqueeze(0)
+
+def train_reinforce_baseline():
+    env = GridWorld()
+
+    policy_net = PolicyNetwork()
+    value_net = ValueNetwork()
+
+    
+    policy_optimizer = optim.Adam(policy_net.parameters(), lr=0.0005)
+    value_optimizer = optim.Adam(value_net.parameters(), lr=0.0005)
+
+    num_episodes = 2000
+    gamma = 0.99
+
+    print("Training REINFORCE with Baseline")
+
+    for episode in range(num_episodes):
+        state = env.reset()
+        done = False
+
+        log_probs = []
+        values = []
+        rewards = []
+
+        
+        while not done:
+            state_t = state_to_tensor(state)
+
+            probs = policy_net(state_t)
+            value = value_net(state_t)
+
+           
+            dist = torch.distributions.Categorical(probs)
+            action = dist.sample()
+
+           
+            next_state, reward, done = env.step(state, action.item())
+
+            log_probs.append(dist.log_prob(action))
+            values.append(value)
+            rewards.append(reward)
+
+            state = next_state
+
+            
+            if len(rewards) > 100:
+                break
+
+       
+        returns = []
+        G = 0
+        for r in reversed(rewards):
+            G = r + gamma * G
+            returns.insert(0, G)
+        returns = torch.tensor(returns, dtype=torch.float32)
+
+        
+        if len(returns) > 1:
+            returns = (returns - returns.mean()) / (returns.std() + 1e-9)
+        else:
+            returns = returns - returns.mean()
+
+       
+        policy_loss = []
+        value_loss = []
+
+        for log_prob, value, G_t in zip(log_probs, values, returns):
+            advantage = G_t - value.item()
+
+           
+            policy_loss.append(-log_prob * advantage)
+
+          
+            target = torch.tensor([G_t], dtype=torch.float32)
+            value_loss.append(F.mse_loss(value.view(-1), target))
+
+        policy_optimizer.zero_grad()
+        value_optimizer.zero_grad()
+
+      
+        if policy_loss:
+            loss_p = torch.stack(policy_loss).sum()
+            loss_v = torch.stack(value_loss).sum()
+
+            loss_p.backward()
+            loss_v.backward()
+
+            torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(value_net.parameters(), 1.0)
+
+            policy_optimizer.step()
+            value_optimizer.step()
+
+        if (episode + 1) % 500 == 0:
+            print(f"Episode {episode + 1}/{num_episodes} completed.")
+
+    return policy_net
+
+# --- 4. VISUALIZE ---
+if __name__ == "__main__":
+    trained_policy = train_reinforce_baseline()
+
+    print("\nFinal Policy (REINFORCE):")
+    actions_map = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+
+    output_grid = []
+    for s in range(16):
+        if s in [0, 15]:
+            output_grid.append(" T ")
+            continue
+        st = state_to_tensor(s)
+        with torch.no_grad():
+            probs = trained_policy(st)
+            best_a = torch.argmax(probs).item()
+        output_grid.append(f" {actions_map[best_a]} ")
+
+    print("-" * 17)
+    for i in range(0, 16, 4):
+        print("|".join(output_grid[i:i+4]))
+        print("-" * 17)
