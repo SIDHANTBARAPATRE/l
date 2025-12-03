@@ -1,20 +1,110 @@
+
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
 
-X = np.array([[1], [2], [3], [4], [5]])
-y = np.array([2, 4, 5, 4, 5])
+def value_iteration_grid_world():
+  
+    grid_size = 4
+    gamma = 1.0 
+    theta = 1e-4 
 
-model = LinearRegression()
-model.fit(X, y)
+   
+    terminal_states = [0, 15]
+    actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
 
-y_pred = model.predict(X)
+  
+    V = np.zeros(grid_size * grid_size)
 
-plt.scatter(X, y, color='blue', label='Actual Data')
-plt.plot(X, y_pred, color='red', linewidth=2, label='Best Fit Line')
-plt.title("Linear Regression Example")
-plt.xlabel("X (Independent Variable)")
-plt.ylabel("Y (Dependent Variable)")
-plt.legend()
-plt.grid(True)
-plt.show()
+    print("Starting Value Iteration...")
+    iteration = 0
+
+    
+    while True:
+        delta = 0
+        
+        V_new = np.copy(V)
+
+        
+        for s in range(grid_size * grid_size):
+            if s in terminal_states:
+                continue 
+
+            
+            row, col = divmod(s, grid_size)
+
+            
+            action_values = []
+
+            for action in actions:
+                
+                next_r, next_c = row, col
+
+                if action == 'UP':    next_r = max(row - 1, 0)
+                elif action == 'DOWN':  next_r = min(row + 1, grid_size - 1)
+                elif action == 'LEFT':  next_c = max(col - 1, 0)
+                elif action == 'RIGHT': next_c = min(col + 1, grid_size - 1)
+
+                next_state = next_r * grid_size + next_c
+
+                
+                reward = -1
+
+                
+                val = reward + gamma * V[next_state]
+                action_values.append(val)
+
+           
+            best_value = max(action_values)
+            V_new[s] = best_value
+
+           
+            delta = max(delta, abs(best_value - V[s]))
+
+        V = V_new
+        iteration += 1
+
+        
+        if delta < theta:
+            print(f"Converged after {iteration} iterations.")
+            break
+
+   
+    print("\nOptimal Value Function (V*):")
+    print(np.round(V.reshape(4, 4), 1))
+
+    
+    print("\nOptimal Policy (Planning Result):")
+    arrows = {0: '↑', 1: '↓', 2: '←', 3: '→'}
+    policy_grid = []
+
+    for s in range(grid_size * grid_size):
+        if s in terminal_states:
+            policy_grid.append(" T ")
+            continue
+
+        row, col = divmod(s, grid_size)
+        best_action_idx = -1
+        best_val = -float('inf')
+
+       
+        for i, action in enumerate(actions):
+            next_r, next_c = row, col
+            if action == 'UP':    next_r = max(row - 1, 0)
+            elif action == 'DOWN':  next_r = min(row + 1, grid_size - 1)
+            elif action == 'LEFT':  next_c = max(col - 1, 0)
+            elif action == 'RIGHT': next_c = min(col + 1, grid_size - 1)
+
+            val = -1 + gamma * V[next_r * grid_size + next_c]
+            if val > best_val:
+                best_val = val
+                best_action_idx = i
+
+        policy_grid.append(f" {arrows[best_action_idx]} ")
+
+    
+    print("-" * 17)
+    for i in range(0, 16, 4):
+        print("|".join(policy_grid[i:i+4]))
+        print("-" * 17)
+
+if __name__ == "__main__":
+    value_iteration_grid_world()
