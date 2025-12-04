@@ -1,76 +1,57 @@
-
-import numpy as np
-
-
-class GridWorld:
-    def __init__(self):
-        self.grid_size = 4
-        self.terminal_states = [0, 15]
-        self.actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
-
-    def step(self, state, action):
-        if state in self.terminal_states:
-            return state, 0, True
-
-        row, col = divmod(state, self.grid_size)
-
-        if action == 'UP':    row = max(row - 1, 0)
-        elif action == 'DOWN':  row = min(row + 1, self.grid_size - 1)
-        elif action == 'LEFT':  col = max(col - 1, 0)
-        elif action == 'RIGHT': col = min(col + 1, self.grid_size - 1)
-
-        next_state = row * self.grid_size + col
-        reward = -1
-        done = next_state in self.terminal_states
-        return next_state, reward, done
-
-    def reset(self):
-        start_state = np.random.randint(0, 16)
-        while start_state in self.terminal_states:
-            start_state = np.random.randint(0, 16)
-        return start_state
+#lab6
+import shap, numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
 
-def td_lambda_learning(env, lam=0.5, num_episodes=5000, alpha=0.1, gamma=1.0):
-   
-    V = np.zeros(env.grid_size * env.grid_size)
-
-    print(f"Running TD({lam}) Learning...")
-
-    for episode in range(num_episodes):
-       
-        E = np.zeros(env.grid_size * env.grid_size)
-
-        state = env.reset()
-        done = False
-
-        while not done:
-        
-            action = np.random.choice(env.actions)
-            next_state, reward, done = env.step(state, action)
-
-           
-            target = reward + (0 if done else gamma * V[next_state])
-            delta = target - V[state]
-
-           
-            E[state] += 1
-
-            V += alpha * delta * E
-
-            E *= gamma * lam
-
-            state = next_state
-
-    return V
+iris = load_iris()
+X = pd.DataFrame(iris.data, columns=iris.feature_names)
+y = iris.target
 
 
-if __name__ == "__main__":
-    env = GridWorld()
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-    
-    v_values = td_lambda_learning(env, lam=0.5)
 
-    print(f"\nState-Value Function V(s) via TD(0.5):")
-    print("-" * 30)
-    print(np.round(v_values.reshape(4, 4), 2))
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+print("Test acc:", model.score(X_test, y_test))
+
+
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_test)   
+
+print("shap_values type:", type(shap_values))
+print("shap_values shape:", np.shape(shap_values))
+
+
+if isinstance(shap_values, list):
+    stacked = np.stack(shap_values, axis=2)    
+    shap_2d = np.mean(np.abs(stacked), axis=2) 
+elif isinstance(shap_values, np.ndarray):
+    if shap_values.ndim == 3:
+        shap_2d = np.mean(np.abs(shap_values), axis=2)
+    elif shap_values.ndim == 2:
+        shap_2d = np.abs(shap_values)
+    else:
+        raise ValueError("Unexpected shap_values ndim: " + str(shap_values.ndim))
+else:
+    raise ValueError("Unexpected type for shap_values")
+
+print("combined shap_2d shape:", shap_2d.shape)
+assert shap_2d.shape[1] == X_test.shape[1]
+
+
+mean_abs = shap_2d.mean(axis=0)
+imp_df = pd.DataFrame({"feature": X_test.columns, "mean_abs_shap": mean_abs}).sort_values("mean_abs_shap", ascending=False)
+plt.figure(figsize=(6,3))
+plt.barh(imp_df['feature'], imp_df['mean_abs_shap'])
+plt.gca().invert_yaxis()
+plt.title("Global Feature Importance (mean |SHAP|)")
+plt.xlabel("mean |SHAP|")
+plt.tight_layout()
+plt.show()
+
+
+shap.summary_plot(shap_2d, X_test.values, feature_names=X_test.columns, show=True)
