@@ -1,110 +1,66 @@
-
+# lab2
+import kagglehub
+import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
 
-def value_iteration_grid_world():
-  
-    grid_size = 4
-    gamma = 1.0 
-    theta = 1e-4 
+path = kagglehub.dataset_download("julianbloise/winners-formula-1-1950-to-2025")
 
-   
-    terminal_states = [0, 15]
-    actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+dataset_file = os.path.join(path, 'winners_f1_1950_2025_v2.csv')
+df = pd.read_csv(dataset_file)
+print(f"Data Loaded Successfully. Shape: {df.shape}")
 
-  
-    V = np.zeros(grid_size * grid_size)
+numeric_cols = df.select_dtypes(include=[np.number]).columns
+categorical_cols = df.select_dtypes(include=['object', 'category']).columns
 
-    print("Starting Value Iteration...")
-    iteration = 0
+print(f"\nNumeric Columns: {numeric_cols.tolist()}")
+print(f"Categorical Columns: {categorical_cols.tolist()}")
 
-    
-    while True:
-        delta = 0
-        
-        V_new = np.copy(V)
+if not numeric_cols.empty:
+    desc = pd.DataFrame(index=numeric_cols)
+    desc['Mean'] = df[numeric_cols].mean()
+    desc['Median'] = df[numeric_cols].median()
+    desc['Mode'] = df[numeric_cols].mode().iloc[0]
+    print(desc)
+else:
+    print("No numeric columns available for statistics.")
 
-        
-        for s in range(grid_size * grid_size):
-            if s in terminal_states:
-                continue 
+for col in categorical_cols:
+    print(f"\nAnalyzing Feature: {col}")
 
-            
-            row, col = divmod(s, grid_size)
+    counts = df[col].value_counts()
 
-            
-            action_values = []
+    if len(counts) > 1:
+        majority_count = counts.iloc[0]
+        minority_count = counts.iloc[-1]
 
-            for action in actions:
-                
-                next_r, next_c = row, col
+        imbalance_ratio = majority_count / minority_count
 
-                if action == 'UP':    next_r = max(row - 1, 0)
-                elif action == 'DOWN':  next_r = min(row + 1, grid_size - 1)
-                elif action == 'LEFT':  next_c = max(col - 1, 0)
-                elif action == 'RIGHT': next_c = min(col + 1, grid_size - 1)
+        print(f"   Top Group:    {counts.index[0]} ({majority_count})")
+        print(f"   Bottom Group: {counts.index[-1]} ({minority_count})")
+        print(f"   Imbalance Ratio: {imbalance_ratio:.2f}")
 
-                next_state = next_r * grid_size + next_c
+        if imbalance_ratio > 10:
+            print("   ⚠️ STATUS: CRITICAL IMBALANCE")
+        elif imbalance_ratio > 3:
+            print("   ⚠️ STATUS: MODERATE IMBALANCE")
+        else:
+            print("   ✅ STATUS: BALANCED")
 
-                
-                reward = -1
+    else:
+        print("   -> Constant value (Skipped)")
 
-                
-                val = reward + gamma * V[next_state]
-                action_values.append(val)
+plot_cols = categorical_cols[:3]
 
-           
-            best_value = max(action_values)
-            V_new[s] = best_value
+for col in plot_cols:
+    plt.figure(figsize=(10, 5))
 
-           
-            delta = max(delta, abs(best_value - V[s]))
+    top_n = df[col].value_counts().nlargest(10)
 
-        V = V_new
-        iteration += 1
-
-        
-        if delta < theta:
-            print(f"Converged after {iteration} iterations.")
-            break
-
-   
-    print("\nOptimal Value Function (V*):")
-    print(np.round(V.reshape(4, 4), 1))
-
-    
-    print("\nOptimal Policy (Planning Result):")
-    arrows = {0: '↑', 1: '↓', 2: '←', 3: '→'}
-    policy_grid = []
-
-    for s in range(grid_size * grid_size):
-        if s in terminal_states:
-            policy_grid.append(" T ")
-            continue
-
-        row, col = divmod(s, grid_size)
-        best_action_idx = -1
-        best_val = -float('inf')
-
-       
-        for i, action in enumerate(actions):
-            next_r, next_c = row, col
-            if action == 'UP':    next_r = max(row - 1, 0)
-            elif action == 'DOWN':  next_r = min(row + 1, grid_size - 1)
-            elif action == 'LEFT':  next_c = max(col - 1, 0)
-            elif action == 'RIGHT': next_c = min(col + 1, grid_size - 1)
-
-            val = -1 + gamma * V[next_r * grid_size + next_c]
-            if val > best_val:
-                best_val = val
-                best_action_idx = i
-
-        policy_grid.append(f" {arrows[best_action_idx]} ")
-
-    
-    print("-" * 17)
-    for i in range(0, 16, 4):
-        print("|".join(policy_grid[i:i+4]))
-        print("-" * 17)
-
-if __name__ == "__main__":
-    value_iteration_grid_world()
+    sns.barplot(x=top_n.index, y=top_n.values)
+    plt.title(f'Distribution: {col} (Top 10)')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
