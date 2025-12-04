@@ -1,81 +1,69 @@
-
+# lab1
+import kagglehub
+import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import os
 
+path = kagglehub.dataset_download("julianbloise/winners-formula-1-1950-to-2025")
 
-class GridWorld:
-    def __init__(self):
-        self.grid_size = 6
-        self.terminal_states = [0, 35]
-        self.actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+dataset_file = os.path.join(path, 'winners_f1_1950_2025_v2.csv')
 
-    def step(self, state, action):
-        if state in self.terminal_states:
-            return state, 0, True
+df = pd.read_csv(dataset_file)
 
-        
-        row, col = divmod(state, self.grid_size)
-        if action == 'UP':    row = max(row - 1, 0)
-        elif action == 'DOWN':  row = min(row + 1, self.grid_size - 1)
-        elif action == 'LEFT':  col = max(col - 1, 0)
-        elif action == 'RIGHT': col = min(col + 1, self.grid_size - 1)
+print("Dataset Shape:", df.shape)
+print(df.info())
 
-        next_state = row * self.grid_size + col
-        reward = -1  
-        done = next_state in self.terminal_states
-        return next_state, reward, done
+numeric_cols = df.select_dtypes(include=[np.number]).columns
+print("\nNumeric Columns:", numeric_cols.tolist())
 
-    def reset(self):
-       
-        start_state = np.random.randint(0, 16)
-        while start_state in self.terminal_states:
-            start_state = np.random.randint(0, 16)
-        return start_state
+desc = pd.DataFrame(index=numeric_cols)
+desc['Mean'] = df[numeric_cols].mean()
+desc['Median'] = df[numeric_cols].median()
+desc['Mode'] = df[numeric_cols].mode().iloc[0]
 
+desc['Std Dev'] = df[numeric_cols].std()
+desc['Skewness'] = df[numeric_cols].skew()
+desc['Kurtosis'] = df[numeric_cols].kurt()
 
-def generate_episode(env):
-    episode = []
-    state = env.reset()
-    done = False
-    while not done:
-        
-        action = np.random.choice(env.actions)
-        next_state, reward, done = env.step(state, action)
-        episode.append((state, action, reward))
-        state = next_state
-    return episode
+print(desc)
 
+print("\n--- Normality Tests (Shapiro-Wilk) ---")
+for col in numeric_cols:
+    try:
+        stat, p = stats.shapiro(df[col].dropna())
+        print(f"{col}: W={stat:.3f}, p={p:.3f} --> {'Normal' if p>0.05 else 'Not Normal'}")
+    except Exception as e:
+        print(f"{col}: Could not run Shapiro-Wilk ({e})")
 
-def mc_policy_evaluation(env, num_episodes=5000):
-   
-    V = np.zeros(env.grid_size * env.grid_size)
+for col in numeric_cols:
+    plt.figure(figsize=(10,5))
+    plt.subplot(1,2,1)
+    sns.histplot(df[col].dropna(), kde=True, bins=30)
+    plt.title(f"Histogram of {col}")
 
-   
-    returns = {s: [] for s in range(env.grid_size * env.grid_size)}
+    plt.subplot(1,2,2)
+    sns.boxplot(x=df[col].dropna())
+    plt.title(f"Boxplot of {col}")
 
-    for _ in range(num_episodes):
-        episode = generate_episode(env)
-        G = 0
+    plt.tight_layout()
+    plt.show()
 
-       
-        for idx in range(len(episode) - 1, -1, -1):
-            state, action, reward = episode[idx]
-            G = G + reward 
+categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+for col in categorical_cols:
+    plt.figure(figsize=(6,4))
+    df[col].value_counts().head(20).plot(kind='bar')
+    plt.title(f"Class Distribution: {col}")
+    plt.ylabel("Count")
+    plt.show()
 
-           
-            previous_states = [x[0] for x in episode[:idx]]
-            if state not in previous_states:
-                returns[state].append(G)
-                V[state] = np.mean(returns[state]) 
-    return V
-
-
-if __name__ == "__main__":
-    env = GridWorld()
-    print("Monte Carlo Policy Evaluation")
-
-   
-    values = mc_policy_evaluation(env)
-
-    print("\nResulting Value Function (V):")
-    
-    print(np.round(values.reshape(6, 6), 1))
+if len(numeric_cols) > 1:
+    plt.figure(figsize=(10,6))
+    corr_matrix = df[numeric_cols].corr()
+    sns.heatmap(corr_matrix, annot=True, cmap="coolwarm", fmt=".2f", linewidths=0.5)
+    plt.title("Correlation Heatmap (Numeric Features)", fontsize=14)
+    plt.show()
+else:
+    print("Not enough numeric columns for correlation heatmap.")
