@@ -1,75 +1,61 @@
-
+# lab5
+import pandas as pd
 import numpy as np
+import kagglehub
+import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.linear_model import LogisticRegression
+from lime.lime_tabular import LimeTabularExplainer
+
+path = kagglehub.dataset_download("spscientist/students-performance-in-exams")
+dataset_file = os.path.join(path, 'StudentsPerformance.csv')
+df = pd.read_csv(dataset_file)
 
 
-class GridWorld:
-    def __init__(self):
-        self.grid_size = 4
-        self.terminal_states = [0, 15] 
-        self.actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
-
-    def step(self, state, action):
-        if state in self.terminal_states:
-            return state, 0, True
-
-        row, col = divmod(state, self.grid_size)
-
-        if action == 'UP':    row = max(row - 1, 0)
-        elif action == 'DOWN':  row = min(row + 1, self.grid_size - 1)
-        elif action == 'LEFT':  col = max(col - 1, 0)
-        elif action == 'RIGHT': col = min(col + 1, self.grid_size - 1)
-
-        next_state = row * self.grid_size + col
-        reward = -1
-        done = next_state in self.terminal_states
-        return next_state, reward, done
-
-    def reset(self):
-        start_state = np.random.randint(0, 16)
-        while start_state in self.terminal_states:
-            start_state = np.random.randint(0, 16)
-        return start_state
+label_enc = LabelEncoder()
+for col in df.select_dtypes(include="object").columns:
+    df[col] = label_enc.fit_transform(df[col])
 
 
-def td_zero_learning(env, num_episodes=5000, alpha=0.1, gamma=1.0):
-   
-    V = np.zeros(env.grid_size * env.grid_size)
+df['passed_math'] = (df['math score'] >= 50).astype(int)
 
-    print(f"Running TD(0) Learning for {num_episodes} episodes...")
-
-    for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-
-        while not done:
-            
-            action = np.random.choice(env.actions)
-
-            
-            next_state, reward, done = env.step(state, action)
-
-            current_value = V[state]
-
-            
-            next_state_value = 0 if done else V[next_state]
-            td_target = reward + gamma * next_state_value
-
-            
-            V[state] = current_value + alpha * (td_target - current_value)
-
-            state = next_state
-
-    return V
+X = df.drop(columns=['math score', 'passed_math'])
+y = df['passed_math']
 
 
-if __name__ == "__main__":
-    env = GridWorld()
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42
+)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
 
-    
-    v_values = td_zero_learning(env)
 
-    print("\nState-Value Function V(s) learned via TD(0):")
-    print("-" * 30)
+model = LogisticRegression()
+model.fit(X_train_scaled, y_train)
 
-    
-    print(np.round(v_values.reshape(4, 4), 2))
+
+explainer = LimeTabularExplainer(
+    training_data=X_train_scaled,
+    training_labels=y_train,
+    feature_names=X.columns,
+    class_names=['Fail', 'Pass'],
+    mode='classification'
+)
+
+
+i = 5  
+exp = explainer.explain_instance(
+    data_row=X_test_scaled[i],
+    predict_fn=model.predict_proba
+)
+
+print("\nLIME Explanation for Student Sample:")
+print(f"Actual Label: {'Pass' if y_test.iloc[i]==1 else 'Fail'}")
+print(f"Predicted Probabilities: {model.predict_proba([X_test_scaled[i]])}")
+
+exp.show_in_notebook(show_table=True)
+# Or if not in Jupyter:
+exp.save_to_file('lime_student.html')
+print("LIME explanation saved as lime_student.html")
