@@ -1,99 +1,62 @@
-
+# lab3
+import pandas as pd
+import kagglehub
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+import os
 
-class MDPGridWorld:
-    def __init__(self):
-        self.grid_size = 4
-        
-        self.terminal_states = [15]
-        self.actions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
-        self.gamma = 1.0 
+path = kagglehub.dataset_download("julianbloise/winners-formula-1-1950-to-2025")
 
-    def get_next_state_reward(self, state, action):
-        if state in self.terminal_states:
-            return state, 0
+dataset_file = os.path.join(path, 'winners_f1_1950_2025_v2.csv')
+df = pd.read_csv(dataset_file)
 
-        row, col = divmod(state, self.grid_size)
+df['favorable'] = (df['team'] == 'Ferrari').astype(int)
 
-       
-        if action == 'UP':    row = max(row - 1, 0)
-        elif action == 'DOWN':  row = min(row + 1, self.grid_size - 1)
-        elif action == 'LEFT':  col = max(col - 1, 0)
-        elif action == 'RIGHT': col = min(col + 1, self.grid_size - 1)
+sensitive = 'continent'
+outcome = 'favorable'
 
-        next_state = row * self.grid_size + col
-        reward = -1 
-        return next_state, reward
+def fairness_metrics(data, s=sensitive, y=outcome):
+    g1 = data[data[s] == data[s].unique()[0]][y]
+    g0 = data[data[s] != data[s].unique()[0]][y]
+    return {
+        "Demographic Parity Diff": abs(g1.mean() - g0.mean()),
+        "Disparate Impact Ratio": g0.mean() / g1.mean() if g1.mean() > 0 else 0,
+        "Equal Opportunity Diff": abs(g1.mean() - g0.mean())
+    }
 
-    def value_iteration(self):
-        """1. PLAN: Calculate V* to find the best policy."""
-        V = np.zeros(self.grid_size * self.grid_size)
-        theta = 1e-4
+print("Before Mitigation:", fairness_metrics(df))
+sns.barplot(x=df[sensitive], y=df[outcome])
+plt.title(f"Ferrari Win Rate by {sensitive} (Before)")
+plt.show()
 
-        while True:
-            delta = 0
-            V_new = np.copy(V)
-            for s in range(self.grid_size * self.grid_size):
-                if s in self.terminal_states: continue
+majority_grp = df[sensitive].value_counts().idxmax()
+df_majority = df[df[sensitive] == majority_grp]
+df_minority = df[df[sensitive] != majority_grp]
 
-                action_values = []
-                for a in self.actions:
-                    ns, r = self.get_next_state_reward(s, a)
-                    action_values.append(r + self.gamma * V[ns])
+df_minority_upsampled = df_minority.sample(n=len(df_majority), replace=True, random_state=42)
+df_bal = pd.concat([df_majority, df_minority_upsampled])
 
-                new_val = max(action_values)
-                V_new[s] = new_val
-                delta = max(delta, abs(new_val - V[s]))
-            V = V_new
-            if delta < theta: break
-        return V
+X_train, X_test, y_train, y_test = train_test_split(
+    df_bal.drop(columns=[outcome]),
+    df_bal[outcome],
+    test_size=0.3,
+    random_state=42
+)
 
-    def rollout(self, start_state, V):
-        """2. ACT: Execute the policy from the start state."""
-        print(f"\n--- Rolling out Optimal Policy from State {start_state} (0,0) ---")
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train.select_dtypes(include=[np.number]), y_train)
+y_pred = model.predict(X_test.select_dtypes(include=[np.number]))
 
-        curr_state = start_state
-        steps = 0
-        path = [curr_state]
+print("\nModel Accuracy After Mitigation:", accuracy_score(y_test, y_pred))
 
-        while curr_state not in self.terminal_states:
-            row, col = divmod(curr_state, self.grid_size)
+print("\nAfter Mitigation:", fairness_metrics(df_bal))
+sns.barplot(x=df_bal[sensitive], y=df_bal[outcome])
+plt.title(f"Ferrari Win Rate by {sensitive} (After)")
+plt.show()
 
-           
-            best_action = None
-            best_val = -float('inf')
-
-            for action in self.actions:
-                ns, r = self.get_next_state_reward(curr_state, action)
-                val = r + self.gamma * V[ns]
-
-                if val > best_val:
-                    best_val = val
-                    best_action = action
-
-          
-            next_state, _ = self.get_next_state_reward(curr_state, best_action)
-
-            print(f"Step {steps+1}: At {curr_state} ({row},{col}) -> Action: {best_action} -> New State: {next_state}")
-
-            curr_state = next_state
-            path.append(curr_state)
-            steps += 1
-
-            if steps > 20: 
-                print("Stuck in loop!")
-                break
-
-        print(f"\nGoal Reached at State {curr_state}!")
-        print(f"Total Path: {path}")
-
-
-if __name__ == "__main__":
-    world = MDPGridWorld()
-
-   
-    print("Computing Optimal Policy...")
-    optimal_values = world.value_iteration()
-
-   
-    world.rollout(start_state=0, V=optimal_values)
+comparison = pd.DataFrame([fairness_metrics(df), fairness_metrics(df_bal)], index=["Before", "After"])
+print("\nComparison:\n", comparison)
