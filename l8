@@ -1,95 +1,46 @@
-
-import numpy as np
-
-
-class GridWorld:
-    def __init__(self):
-        self.grid_size = 4
-        self.terminal_states = [0, 15] 
-        self.actions = [0, 1, 2, 3] 
-
-    def step(self, state, action):
-        if state in self.terminal_states:
-            return state, 0, True
-
-        row, col = divmod(state, self.grid_size)
-
-        # Move Logic
-        if action == 0:   row = max(row - 1, 0) 
-        elif action == 1: row = min(row + 1, self.grid_size - 1) 
-        elif action == 2: col = max(col - 1, 0) 
-        elif action == 3: col = min(col + 1, self.grid_size - 1) 
-
-        next_state = row * self.grid_size + col
-        reward = -1
-        done = next_state in self.terminal_states
-        return next_state, reward, done
-
-    def reset(self):
-        start_state = np.random.randint(0, 16)
-        while start_state in self.terminal_states:
-            start_state = np.random.randint(0, 16)
-        return start_state
+# lab8
+import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
+np.random.seed(0)
 
 
-def q_learning():
-    env = GridWorld()
+def lap(scale): return np.random.laplace(0, scale)
+def dp_count(df, pred, eps):
+    true = int(pred(df).sum()); scale = 1.0/eps
+    noisy = max(0.0, true + lap(scale)); return noisy, true
+def dp_mean(df, col, a, b, eps):
+    x = df[col].clip(a, b).astype(float).values; n=len(x)
+    true = x.mean(); delta = (b-a)/n; scale = delta/eps
+    noisy = float(np.clip(true + lap(scale), a, b)); return noisy, true
 
+
+t = sns.load_dataset('titanic').dropna(subset=['age','fare','sex','pclass','embarked'])
+
+pred = lambda df: df['age'] > 30          
+col = 'fare'; a,b = 0.0, min(500, t['fare'].max())  
+
+
+eps_list = [0.05, 0.1, 0.2, 0.5, 1.0]
+T = 300
+results = {'eps':[], 'count_rmse':[], 'mean_rmse':[]}
+
+for eps in eps_list:
     
-    num_episodes = 5000
-    alpha = 0.1   
-    gamma = 1.0   
-    epsilon = 0.1 
+    noisy_counts = [dp_count(t, pred, eps)[0] for _ in range(T)]
+    true_count = dp_count(t, pred, eps)[1]
+    rmse_count = np.sqrt(np.mean((np.array(noisy_counts)-true_count)**2))
 
-    
-    Q = np.zeros((16, 4))
+    noisy_means = [dp_mean(t, col, a, b, eps)[0] for _ in range(T)]
+    true_mean = dp_mean(t, col, a, b, eps)[1]
+    rmse_mean = np.sqrt(np.mean((np.array(noisy_means)-true_mean)**2))
+    results['eps'].append(eps); results['count_rmse'].append(rmse_count); results['mean_rmse'].append(rmse_mean)
 
-    print("Training with Q-Learning (5000 Episodes)...")
-
-    for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-
-        while not done:
-            
-            if np.random.rand() < epsilon:
-                action = np.random.choice(env.actions) 
-            else:
-                action = np.argmax(Q[state]) 
-
-         
-            next_state, reward, done = env.step(state, action)
-
-            
-            best_next_action_val = 0 if done else np.max(Q[next_state])
-
-            
-            td_target = reward + gamma * best_next_action_val
-            Q[state, action] += alpha * (td_target - Q[state, action])
-
-            state = next_state
-
-    return Q
+res = pd.DataFrame(results)
+print(res)
 
 
-def print_policy(Q):
-    actions_map = {0: '↑', 1: '↓', 2: '←', 3: '→'}
-    print("\nFinal Optimal Policy (Q-Learning):")
-    print("-" * 17)
-
-    grid_output = []
-    for s in range(16):
-        if s in [0, 15]:
-            grid_output.append(" T ")
-            continue
-       
-        best_action = np.argmax(Q[s])
-        grid_output.append(f" {actions_map[best_action]} ")
-
-    for i in range(0, 16, 4):
-        print("|".join(grid_output[i:i+4]))
-        print("-" * 17)
-
-if __name__ == "__main__":
-    q_table = q_learning()
-    print_policy(q_table)
+plt.figure(figsize=(8,3))
+plt.subplot(1,2,1)
+plt.plot(res.eps, res.count_rmse, marker='o'); plt.xscale('log'); plt.title('Count RMSE'); plt.xlabel('epsilon')
+plt.subplot(1,2,2)
+plt.plot(res.eps, res.mean_rmse, marker='o'); plt.xscale('log'); plt.title('Mean RMSE'); plt.xlabel('epsilon')
+plt.tight_layout(); plt.show()
